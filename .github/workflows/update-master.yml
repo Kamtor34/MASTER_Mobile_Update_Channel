@@ -3,7 +3,8 @@ name: Update MASTER Mobile Channel
 on:
   workflow_dispatch:
   schedule:
-    - cron: '17 */3 * * *'
+    # Günde 1 kez: 04:17 UTC = Türkiye saatiyle 07:17
+    - cron: '17 4 * * *'
 
 permissions:
   contents: write
