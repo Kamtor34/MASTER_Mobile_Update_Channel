@@ -1,0 +1,96 @@
+name: Update MASTER Mobile Channel
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 */3 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: master-mobile-update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout channel
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependency
+        run: pip install --disable-pip-version-check requests
+
+      - name: Resolve fetch window
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timedelta
+          from pathlib import Path
+          from zoneinfo import ZoneInfo
+          m=json.loads(Path('updates/manifest.json').read_text(encoding='utf-8'))
+          latest=datetime.strptime(m['latest_date'][:10],'%Y-%m-%d').date()
+          today=datetime.now(ZoneInfo('Europe/Istanbul')).date()
+          current=Path('updates/releases/master_delta_current.csv.gz')
+          start=(latest-timedelta(days=7)) if current.exists() and current.stat().st_size>0 else (latest+timedelta(days=1))
+          if start>today: start=today
+          with open('dates.env','w',encoding='utf-8') as f:
+              f.write(f'START={start.isoformat()}\nEND={today.isoformat()}\n')
+          print(f'Fetch window: {start} -> {today}')
+          PY
+          cat dates.env >> "$GITHUB_ENV"
+
+      - name: Build validated cumulative delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p updates/releases .tmp/raw
+          CURRENT=updates/releases/master_delta_current.csv.gz
+          python tools/master_update_pipeline.py \
+            --start "$START" \
+            --end "$END" \
+            --existing-delta "$CURRENT" \
+            --out "$CURRENT" \
+            --raw-dir .tmp/raw \
+            --manifest updates/manifest.json \
+            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz"
+
+      - name: Validate generated channel files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv,gzip,hashlib,json
+          from pathlib import Path
+          m=json.loads(Path('updates/manifest.json').read_text(encoding='utf-8'))
+          p=Path('updates/releases/master_delta_current.csv.gz')
+          assert m['enabled'] is True
+          assert p.exists() and p.stat().st_size>0
+          assert hashlib.sha256(p.read_bytes()).hexdigest()==m['sha256']
+          with gzip.open(p,'rt',encoding='utf-8',newline='') as f:
+              rows=sum(1 for _ in csv.DictReader(f))
+          assert rows==m['package_rows'],(rows,m['package_rows'])
+          print('Channel validation OK | rows=',rows)
+          PY
+
+      - name: Commit channel update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/manifest.json updates/releases/master_delta_current.csv.gz
+          if git diff --cached --quiet; then
+            echo "Yeni/değişen yayın yok."
+            exit 0
+          fi
+          git commit -m "MASTER mobile delta: $END"
+          git push
