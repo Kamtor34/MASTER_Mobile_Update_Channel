@@ -11,7 +11,7 @@ Bu public repo yalnız **MASTER Android veri güncelleme kanalıdır**. Android 
 - `updates/manifest.json` — APK'nın kontrol ettiği kanal durumu
 - `updates/releases/master_delta_current.csv.gz` — APK baseline'ından sonraki doğrulanmış, kümülatif canonical delta
 - `tools/master_update_pipeline.py` — Sahadan verisini canonical formata dönüştüren üretici
-- `.github/workflows/update-master.yml` — 3 saatte bir çalışan yayın workflow'u
+- `.github/workflows/update-master.yml` — **günde 1 kez** çalışan yayın workflow'u (04:17 UTC / Türkiye saatiyle yaklaşık 07:17)
 
 ## Canonical sütunlar
 
