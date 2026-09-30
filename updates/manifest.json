@@ -1,0 +1,23 @@
+{
+  "schema": 3,
+  "enabled": false,
+  "version": "bootstrap-404435-2026-09-16",
+  "base_date": "2026-09-16",
+  "base_total_matches": 404435,
+  "latest_date": "2026-09-16",
+  "total_matches": 404435,
+  "new_matches": 0,
+  "updated_matches": 0,
+  "package_rows": 0,
+  "source_rows_seen": 0,
+  "finished_rows_seen": 0,
+  "size_bytes": 0,
+  "delta_url": "",
+  "sha256": "",
+  "key_strategy": "match_id_then_date_league_home_away",
+  "columns": [
+    "match_id", "date", "time", "league_id", "league", "home", "away",
+    "home_score", "away_score", "ms1", "msx", "ms2", "kg_var", "kg_yok",
+    "alt25", "ust25"
+  ]
+}
