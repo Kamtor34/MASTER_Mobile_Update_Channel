@@ -112,9 +112,9 @@ def sha(path):
     return h.hexdigest()
 
 def main():
-    p=argparse.ArgumentParser(); p.add_argument('--start',required=True);p.add_argument('--end',required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--existing-delta',type=Path);p.add_argument('--raw-dir',type=Path);p.add_argument('--manifest',type=Path,required=True);p.add_argument('--public-url',required=True);p.add_argument('--sleep',type=float,default=.5);a=p.parse_args()
-    prev=json.loads(a.manifest.read_text(encoding='utf-8')); base_total=int(prev.get('base_total_matches') or prev.get('total_matches') or 0); base_date=prev.get('base_date') or prev.get('latest_date') or ''
-    cur=load(a.existing_delta) if a.existing_delta and a.existing_delta.exists() else {}; newn=updn=rawtotal=0; fetched=[]; s=requests.Session()
+    p=argparse.ArgumentParser(); p.add_argument('--start',required=True);p.add_argument('--end',required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--incremental-out',type=Path,required=True);p.add_argument('--existing-delta',type=Path);p.add_argument('--raw-dir',type=Path);p.add_argument('--manifest',type=Path,required=True);p.add_argument('--public-url',required=True);p.add_argument('--incremental-public-url',required=True);p.add_argument('--sleep',type=float,default=.5);a=p.parse_args()
+    prev=json.loads(a.manifest.read_text(encoding='utf-8')); base_total=int(prev.get('base_total_matches') or prev.get('total_matches') or 0); base_date=prev.get('base_date') or prev.get('latest_date') or ''; prev_version=prev.get('version') or ''
+    cur=load(a.existing_delta) if a.existing_delta and a.existing_delta.exists() else {}; changed_rows={}; newn=updn=rawtotal=0; fetched=[]; s=requests.Session()
     for d in dates(a.start,a.end):
         rr,raw=fetch_day(s,d,a.raw_dir); rawtotal+=raw; fetched+=rr; print(f'[OK] {d}: raw={raw} finished={len(rr)}'); time.sleep(max(0,a.sleep))
     if len(fetched)>=20:
@@ -123,13 +123,18 @@ def main():
         if ms==0: raise RuntimeError('MS market quality=0')
     for inc in fetched:
         inc=norm(inc); ik=idkey(inc); fk=fbkey(inc); ok=ik if ik and ik in cur else (fk if fk in cur else None)
-        if not ok: cur[ik or fk]=inc; newn+=1; continue
+        if not ok:
+            nk=ik or fk; cur[nk]=inc; changed_rows[nk]=inc; newn+=1; continue
         old=cur[ok]; m=merge(old,inc); nk=key(m)
-        if norm(old)!=norm(m): updn+=1
+        if norm(old)!=norm(m):
+            updn+=1; changed_rows.pop(ok,None); changed_rows[nk]=m
         if nk!=ok: cur.pop(ok,None)
         cur[nk]=m
     rows=sorted(cur.values(),key=lambda r:(r['date'],r['league'],r['home'],r['away'])); write(a.out,rows)
-    latest=max((r['date'] for r in rows),default=prev.get('latest_date') or a.start); digest=sha(a.out)
-    manifest={'schema':3,'enabled':bool(rows),'version':f'{latest}-{int(time.time())}-{digest[:12]}','base_date':base_date,'base_total_matches':base_total,'latest_date':latest,'total_matches':base_total+len(rows),'new_matches':newn,'updated_matches':updn,'package_rows':len(rows),'source_rows_seen':rawtotal,'finished_rows_seen':len(fetched),'size_bytes':a.out.stat().st_size,'delta_url':a.public_url,'sha256':digest,'key_strategy':'match_id_then_date_league_home_away','columns':FIELDS}
+    incremental_rows=sorted(changed_rows.values(),key=lambda r:(r['date'],r['league'],r['home'],r['away'])); write(a.incremental_out,incremental_rows)
+    latest=max((r['date'] for r in rows),default=prev.get('latest_date') or a.start); digest=sha(a.out); incremental_digest=sha(a.incremental_out)
+    changed=bool(incremental_rows)
+    version=f'{latest}-{int(time.time())}-{digest[:12]}' if changed else prev_version
+    manifest={'schema':4,'enabled':bool(rows),'version':version,'previous_version':prev_version if changed else prev.get('previous_version',''),'base_date':base_date,'base_total_matches':base_total,'latest_date':latest,'total_matches':base_total+len(rows),'new_matches':newn,'updated_matches':updn,'package_rows':len(rows),'source_rows_seen':rawtotal,'finished_rows_seen':len(fetched),'size_bytes':a.out.stat().st_size,'delta_url':a.public_url,'sha256':digest,'incremental_rows':len(incremental_rows),'incremental_size_bytes':a.incremental_out.stat().st_size,'incremental_url':a.incremental_public_url,'incremental_sha256':incremental_digest,'key_strategy':'match_id_then_date_league_home_away','columns':FIELDS}
     a.manifest.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8'); print(json.dumps(manifest,ensure_ascii=False,indent=2))
 if __name__=='__main__': main()
