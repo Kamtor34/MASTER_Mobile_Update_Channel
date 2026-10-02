@@ -55,14 +55,17 @@ jobs:
           set -euo pipefail
           mkdir -p updates/releases .tmp/raw
           CURRENT=updates/releases/master_delta_current.csv.gz
+          INCREMENTAL=updates/releases/master_delta_incremental.csv.gz
           python tools/master_update_pipeline.py \
             --start "$START" \
             --end "$END" \
             --existing-delta "$CURRENT" \
             --out "$CURRENT" \
+            --incremental-out "$INCREMENTAL" \
             --raw-dir .tmp/raw \
             --manifest updates/manifest.json \
-            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz"
+            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
+            --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
 
       - name: Validate generated channel files
         shell: bash
@@ -73,13 +76,19 @@ jobs:
           from pathlib import Path
           m=json.loads(Path('updates/manifest.json').read_text(encoding='utf-8'))
           p=Path('updates/releases/master_delta_current.csv.gz')
+          inc=Path('updates/releases/master_delta_incremental.csv.gz')
           assert m['enabled'] is True
           assert p.exists() and p.stat().st_size>0
+          assert inc.exists() and inc.stat().st_size>0
           assert hashlib.sha256(p.read_bytes()).hexdigest()==m['sha256']
+          assert hashlib.sha256(inc.read_bytes()).hexdigest()==m['incremental_sha256']
           with gzip.open(p,'rt',encoding='utf-8',newline='') as f:
               rows=sum(1 for _ in csv.DictReader(f))
+          with gzip.open(inc,'rt',encoding='utf-8',newline='') as f:
+              inc_rows=sum(1 for _ in csv.DictReader(f))
           assert rows==m['package_rows'],(rows,m['package_rows'])
-          print('Channel validation OK | rows=',rows)
+          assert inc_rows==m['incremental_rows'],(inc_rows,m['incremental_rows'])
+          print('Channel validation OK | cumulative=',rows,' incremental=',inc_rows)
           PY
 
       - name: Commit channel update
@@ -88,7 +97,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates/manifest.json updates/releases/master_delta_current.csv.gz
+          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
           if git diff --cached --quiet; then
             echo "Yeni/değişen yayın yok."
             exit 0
