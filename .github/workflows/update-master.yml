@@ -103,4 +103,9 @@ jobs:
             exit 0
           fi
           git commit -m "MASTER mobile delta: $END"
+
+          # Rerun/manual starts may begin from an older workflow commit.
+          # Rebase the generated delta commit onto current main before pushing.
+          git fetch origin main
+          git rebase origin/main
           git push
