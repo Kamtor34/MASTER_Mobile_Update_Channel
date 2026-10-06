@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse,csv,gzip,hashlib,json,time
+import argparse,csv,gzip,hashlib,io,json,math,os,time
 from datetime import datetime,timedelta
 from pathlib import Path
 import requests
@@ -11,8 +11,30 @@ HEADERS={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537
 def clean(v): return '' if v is None else str(v).strip()
 def num(v):
     if v in (None,'','-'): return ''
-    try:return f'{float(v):.6f}'.rstrip('0').rstrip('.')
-    except:return clean(v)
+    try:
+        value=float(str(v).replace(',','.'))
+        if isinstance(v,bool) or not math.isfinite(value): raise ValueError('nonfinite')
+        return f'{value:.6f}'.rstrip('0').rstrip('.')
+    except (ValueError,TypeError) as error: raise RuntimeError('Invalid numeric source value') from error
+
+def score(v):
+    value=num(v)
+    if value=='': return ''
+    x=float(str(v).replace(',','.'))
+    if x<0 or not x.is_integer(): raise RuntimeError('Final score must be a nonnegative integer')
+    return str(int(x))
+
+def odd(v):
+    value=num(v)
+    return value if value and float(value)>1 else ''
+
+def validate_row(row):
+    datetime.strptime(row['date'],'%Y-%m-%d')
+    if not all(row.get(k) for k in ('league','home','away')): raise RuntimeError('Missing match identity')
+    if not score(row.get('home_score')) or not score(row.get('away_score')): raise RuntimeError('Missing final score')
+    for k in FIELDS[9:]:
+        value=num(row.get(k))
+        if value and float(value)<=1: raise RuntimeError('Stored odd must be greater than one')
 
 def dates(a,b):
     x=datetime.strptime(a,'%Y-%m-%d').date(); y=datetime.strptime(b,'%Y-%m-%d').date()
@@ -40,7 +62,7 @@ def odds(match,names):
             for o in g.get('l',[]) or []:
                 if not isinstance(o,dict): continue
                 c=resolve(mid,mn,o.get('n'))
-                if c and c not in out: out[c]=num(o.get('v'))
+                if c and c not in out: out[c]=odd(o.get('v'))
     return out
 
 def get_json(s,url):
@@ -60,7 +82,7 @@ def get_json(s,url):
 
 def fetch_day(s,d,rawdir=None):
     j=get_json(s,URL.format(d)); data=j.get('data')
-    if not isinstance(data,dict) or not isinstance(data.get('soccer',[]),list): raise RuntimeError(d+': schema')
+    if not isinstance(data,dict) or not isinstance(data.get('soccer'),list): raise RuntimeError(d+': schema')
     if rawdir:
         rawdir.mkdir(parents=True,exist_ok=True)
         with gzip.open(rawdir/(d+'.json.gz'),'wt',encoding='utf-8') as f: json.dump(j,f,ensure_ascii=False,separators=(',',':'))
@@ -73,7 +95,7 @@ def fetch_day(s,d,rawdir=None):
             raw+=1; a=m.get('ft_A'); b=m.get('ft_B')
             if a in (None,'') or b in (None,''): continue
             r={k:'' for k in FIELDS}
-            r.update(match_id=clean(m.get('id')),date=d,time=clean(m.get('time') or m.get('time_str') or lg.get('time')),league_id=clean(lg.get('c_id')),league=clean(lg.get('title')),home=clean(m.get('team_A')),away=clean(m.get('team_B')),home_score=num(a),away_score=num(b))
+            r.update(match_id=clean(m.get('id')),date=d,time=clean(m.get('time') or m.get('time_str') or lg.get('time')),league_id=clean(lg.get('c_id')),league=clean(lg.get('title')),home=clean(m.get('team_A')),away=clean(m.get('team_B')),home_score=score(a),away_score=score(b))
             r.update(odds(m,names))
             if r['league'] and r['home'] and r['away']: rows.append(r)
     return rows,raw
@@ -96,14 +118,35 @@ def load(path):
         rd=csv.DictReader(f)
         if any(c not in (rd.fieldnames or []) for c in FIELDS): raise RuntimeError('delta schema')
         for r in rd:
-            r=norm(r); out[key(r)]=r
+            r=norm(r); validate_row(r); identity=key(r)
+            if identity in out and out[identity]!=r: raise RuntimeError('Conflicting duplicate stored match')
+            out[identity]=r
     return out
 
 def write(path,rows):
     path.parent.mkdir(parents=True,exist_ok=True)
-    with gzip.open(path,'wt',encoding='utf-8',newline='') as f:
-        w=csv.DictWriter(f,fieldnames=FIELDS); w.writeheader()
-        for r in rows:w.writerow(norm(r))
+    temporary=path.with_name(path.name+'.tmp')
+    try:
+        with temporary.open('wb') as raw:
+            with gzip.GzipFile(filename='',mode='wb',fileobj=raw,mtime=0) as compressed:
+                with io.TextIOWrapper(compressed,encoding='utf-8',newline='') as f:
+                    w=csv.DictWriter(f,fieldnames=FIELDS); w.writeheader()
+                    for r in rows:
+                        r=norm(r); validate_row(r); w.writerow(r)
+            raw.flush(); os.fsync(raw.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+def write_manifest(path,manifest):
+    temporary=path.with_name(path.name+'.tmp')
+    try:
+        with temporary.open('w',encoding='utf-8') as stream:
+            stream.write(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n')
+            stream.flush(); os.fsync(stream.fileno())
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 def sha(path):
     h=hashlib.sha256()
@@ -117,6 +160,7 @@ def main():
     cur=load(a.existing_delta) if a.existing_delta and a.existing_delta.exists() else {}; changed_rows={}; newn=updn=rawtotal=0; fetched=[]; s=requests.Session()
     for d in dates(a.start,a.end):
         rr,raw=fetch_day(s,d,a.raw_dir); rawtotal+=raw; fetched+=rr; print(f'[OK] {d}: raw={raw} finished={len(rr)}'); time.sleep(max(0,a.sleep))
+    if cur and not fetched: raise RuntimeError('Refresh returned no finished rows; previous channel retained')
     if len(fetched)>=20:
         ids=sum(bool(x['match_id']) for x in fetched); ms=sum(bool(x['ms1'] and x['msx'] and x['ms2']) for x in fetched)
         if ids/len(fetched)<.95: raise RuntimeError(f'Maç_ID quality {ids}/{len(fetched)}')
@@ -136,5 +180,5 @@ def main():
     changed=bool(incremental_rows)
     version=f'{latest}-{int(time.time())}-{digest[:12]}' if changed else prev_version
     manifest={'schema':4,'enabled':bool(rows),'version':version,'previous_version':prev_version if changed else prev.get('previous_version',''),'base_date':base_date,'base_total_matches':base_total,'latest_date':latest,'total_matches':base_total+len(rows),'new_matches':newn,'updated_matches':updn,'package_rows':len(rows),'source_rows_seen':rawtotal,'finished_rows_seen':len(fetched),'size_bytes':a.out.stat().st_size,'delta_url':a.public_url,'sha256':digest,'incremental_rows':len(incremental_rows),'incremental_size_bytes':a.incremental_out.stat().st_size,'incremental_url':a.incremental_public_url,'incremental_sha256':incremental_digest,'key_strategy':'match_id_then_date_league_home_away','columns':FIELDS}
-    a.manifest.write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8'); print(json.dumps(manifest,ensure_ascii=False,indent=2))
+    write_manifest(a.manifest,manifest); print(json.dumps(manifest,ensure_ascii=False,indent=2))
 if __name__=='__main__': main()

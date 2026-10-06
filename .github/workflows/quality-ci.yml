@@ -1,0 +1,20 @@
+name: MASTER Channel Quality
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ['tools/**.py', 'tests/**', '.github/workflows/quality-ci.yml']
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: pip install requests
+      - run: python -m unittest discover -s tests -v
+      - run: python -m py_compile tools/master_update_pipeline.py
