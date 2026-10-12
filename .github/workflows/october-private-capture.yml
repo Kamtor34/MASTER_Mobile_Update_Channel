@@ -1,0 +1,101 @@
+name: October Private Capture Bridge (No Telegram / No Radar)
+
+on:
+  schedule:
+    - cron: '16 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-capture-bridge
+  cancel-in-progress: false
+
+jobs:
+  private-capture:
+    if: github.repository == 'Kamtor34/MASTER_Mobile_Update_Channel'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check October window and private credentials
+        id: gate
+        shell: bash
+        env:
+          PRIVATE_REPO: ${{ secrets.CAPTURE_PRIVATE_REPO }}
+          PRIVATE_PAT: ${{ secrets.CAPTURE_PRIVATE_PAT }}
+        run: |
+          set -euo pipefail
+          if [[ "$(TZ=Europe/Istanbul date +%Y%m%d)" -ge '20261101' ]]; then
+            echo 'active=false' >> "$GITHUB_OUTPUT"
+            echo 'October bridge window ended.'
+            exit 0
+          fi
+          if [[ -z "$PRIVATE_REPO" || -z "$PRIVATE_PAT" ]]; then
+            echo '::error::Set CAPTURE_PRIVATE_REPO and CAPTURE_PRIVATE_PAT repository secrets.'
+            exit 1
+          fi
+          echo "::add-mask::$PRIVATE_REPO"
+          echo 'active=true' >> "$GITHUB_OUTPUT"
+
+      - name: Checkout private capture engine
+        if: steps.gate.outputs.active == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.CAPTURE_PRIVATE_REPO }}
+          token: ${{ secrets.CAPTURE_PRIVATE_PAT }}
+          persist-credentials: false
+          fetch-depth: 1
+          path: collector
+
+      - name: Set up Python
+        if: steps.gate.outputs.active == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        if: steps.gate.outputs.active == 'true'
+        run: python -m pip install -r collector/requirements.txt
+
+      - name: Restore last verified private state
+        if: steps.gate.outputs.active == 'true'
+        working-directory: collector
+        env:
+          GH_TOKEN: ${{ secrets.CAPTURE_PRIVATE_PAT }}
+          BRIDGE_PRIVATE_REPO: ${{ secrets.CAPTURE_PRIVATE_REPO }}
+        run: python capture_bridge.py restore
+
+      - name: Verify and hydrate SQLite
+        if: steps.gate.outputs.active == 'true'
+        working-directory: collector
+        run: python state_archive.py hydrate
+
+      - name: Capture matches and update Excel and SQLite, no Telegram
+        if: steps.gate.outputs.active == 'true'
+        working-directory: collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! python takip.py > "$RUNNER_TEMP/private-capture.log" 2>&1; then
+            echo '::error::Capture failed (logs held only on ephemeral runner).'
+            exit 1
+          fi
+          python quality_status.py can-publish
+
+      - name: Verify and repackage SQLite
+        if: steps.gate.outputs.active == 'true'
+        working-directory: collector
+        shell: bash
+        run: |
+          set -euo pipefail
+          python state_archive.py pack > "$RUNNER_TEMP/private-archive.log" 2>&1
+          python quality_status.py archive-verified
+
+      - name: Save private verified capture without Telegram or Radar
+        if: steps.gate.outputs.active == 'true'
+        working-directory: collector
+        env:
+          GH_TOKEN: ${{ secrets.CAPTURE_PRIVATE_PAT }}
+          BRIDGE_PRIVATE_REPO: ${{ secrets.CAPTURE_PRIVATE_REPO }}
+        run: python capture_bridge.py publish
