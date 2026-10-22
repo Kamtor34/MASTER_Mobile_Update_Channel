@@ -40,7 +40,7 @@ jobs:
           from pathlib import Path
 
           day = os.environ.get("TEST_DATE", "")
-          if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", day):
+          if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
               raise SystemExit("Invalid test date; expected YYYY-MM-DD")
           datetime.strptime(day, "%Y-%m-%d")
 
