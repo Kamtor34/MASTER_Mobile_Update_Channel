@@ -6,7 +6,15 @@ import requests
 
 FIELDS=['match_id','date','time','league_id','league','home','away','home_score','away_score','ms1','msx','ms2','kg_var','kg_yok','alt25','ust25']
 URL='https://www.sahadan.com/api/index/betting-service-bulletin-soccer?a=bs&e=bsbp&u=soccer&application=mackolik.com&language=tr&country=tr&date={}'
-HEADERS={'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36'}
+HEADERS={
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept':'application/json, text/plain, */*',
+    'Accept-Language':'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Referer':'https://www.sahadan.com/',
+    'Origin':'https://www.sahadan.com',
+    'Cache-Control':'no-cache',
+    'Pragma':'no-cache',
+}
 
 def clean(v): return '' if v is None else str(v).strip()
 def num(v):
@@ -69,10 +77,16 @@ def get_json(s,url):
     err=None
     for n in range(4):
         try:
-            r=s.get(url,headers=HEADERS,timeout=30)
-            if r.status_code==429 or r.status_code>=500:
-                raise RuntimeError('HTTP '+str(r.status_code))
-            r.raise_for_status(); j=r.json()
+            r=s.get(url,headers=HEADERS,timeout=30,allow_redirects=True)
+            if r.status_code != 200:
+                # Safe diagnostics only: never print cookies or authorization headers.
+                chain='>'.join(str(x.status_code) for x in r.history)
+                ctype=clean(r.headers.get('Content-Type',''))[:80]
+                raise RuntimeError(f'HTTP {r.status_code}; content-type={ctype or "unknown"}; redirects={chain or "none"}; final-host={r.url.split("/")[2]}')
+            try:
+                j=r.json()
+            except ValueError as e:
+                raise RuntimeError(f'HTTP 200 but invalid JSON; content-type={clean(r.headers.get("Content-Type",""))[:80]}') from e
             if not isinstance(j,dict): raise RuntimeError('JSON root')
             return j
         except Exception as e:
