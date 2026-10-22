@@ -1,0 +1,76 @@
+name: Diagnose Sahadan API
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_date:
+        description: "Test date (YYYY-MM-DD)"
+        required: true
+        default: "2026-10-21"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  test-api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependency
+        run: pip install --disable-pip-version-check requests
+
+      - name: Test one date without publishing data
+        env:
+          TEST_DATE: ${{ inputs.test_date }}
+        run: |
+          python - <<'PY'
+          import importlib.util
+          import os
+          import re
+          from datetime import datetime
+          from pathlib import Path
+
+          day = os.environ.get("TEST_DATE", "")
+          if not re.fullmatch(r"\\d{4}-\\d{2}-\\d{2}", day):
+              raise SystemExit("Invalid test date; expected YYYY-MM-DD")
+          datetime.strptime(day, "%Y-%m-%d")
+
+          source = Path("tools/master_update_pipeline.py")
+          spec = importlib.util.spec_from_file_location("master_pipeline", source)
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+
+          url = module.URL.format(day)
+          print(f"Testing Sahadan endpoint for {day}")
+          print("This diagnostic does not write or publish any data.")
+          try:
+              payload = module.get_json(module.requests.Session(), url)
+          except Exception as exc:
+              print(f"API_TEST=FAIL; detail={exc}")
+              raise SystemExit(1)
+
+          data = payload.get("data")
+          if not isinstance(data, dict) or not isinstance(data.get("soccer"), list):
+              raise SystemExit("API_TEST=FAIL; HTTP 200 but expected data.soccer schema is absent")
+
+          leagues = data["soccer"]
+          matches = [
+              match
+              for league in leagues if isinstance(league, dict)
+              for match in (league.get("matches") or []) if isinstance(match, dict)
+          ]
+          finished = sum(
+              match.get("ft_A") not in (None, "") and match.get("ft_B") not in (None, "")
+              for match in matches
+          )
+          print(f"API_TEST=PASS; status=200; date={day}; leagues={len(leagues)}; matches={len(matches)}; finished={finished}")
+          PY
