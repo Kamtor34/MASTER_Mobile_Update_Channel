@@ -7,11 +7,17 @@ import requests
 FIELDS=['match_id','date','time','league_id','league','home','away','home_score','away_score','ms1','msx','ms2','kg_var','kg_yok','alt25','ust25']
 URL='https://www.sahadan.com/api/index/betting-service-bulletin-soccer?a=bs&e=bsbp&u=soccer&application=mackolik.com&language=tr&country=tr&date={}'
 HEADERS={
-    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36',
     'Accept':'application/json, text/plain, */*',
     'Accept-Language':'tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Referer':'https://www.sahadan.com/',
+    'Referer':'https://www.sahadan.com/genis-iddaa-programi',
     'Origin':'https://www.sahadan.com',
+    'sec-ch-ua-platform':'"Windows"',
+    'sec-ch-ua':'"Google Chrome";v="155", "Chromium";v="155", "Not(A:Brand";v="24"',
+    'sec-ch-ua-mobile':'?0',
+    'x-render-mode':'csr',
+    'x-route-name':'genis-iddaa-programi___tr',
+    'x-route-path':'/genis-iddaa-programi',
     'Cache-Control':'no-cache',
     'Pragma':'no-cache',
 }
