@@ -35,7 +35,10 @@ jobs:
           set -euo pipefail
           if [ -s sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
-            sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+            actual="$(sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz | cut -d' ' -f1)"
+            expected="99f57704e7e25f50880a58122fa849ac8430c546c8037af61b585f0db59da797"
+            echo "Input SHA-256: $actual"
+            test "$actual" = "$expected"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
             echo "No rescue import file in this revision; safely skipping."
