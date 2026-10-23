@@ -2,6 +2,11 @@ name: Import Sahadan Rescue Data
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz'
 
 permissions:
   contents: write
@@ -23,14 +28,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Confirm rescue import file exists
+      - name: Check for rescue import file
+        id: input_check
         shell: bash
         run: |
           set -euo pipefail
-          test -s sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
-          sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+          if [ -s sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No rescue import file in this revision; safely skipping."
+          fi
 
       - name: Merge validated rescue data
+        if: steps.input_check.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -39,6 +51,7 @@ jobs:
             --source-rows-seen 3017
 
       - name: Validate channel output
+        if: steps.input_check.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -63,6 +76,7 @@ jobs:
           PY
 
       - name: Remove temporary input and commit channel update
+        if: steps.input_check.outputs.present == 'true'
         shell: bash
         run: |
           set -euo pipefail
