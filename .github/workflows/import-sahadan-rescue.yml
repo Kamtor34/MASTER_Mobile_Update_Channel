@@ -1,0 +1,76 @@
+name: Import Sahadan Rescue Data
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: master-mobile-update
+  cancel-in-progress: false
+
+jobs:
+  import-rescue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout channel
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Confirm rescue import file exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+          sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+
+      - name: Merge validated rescue data
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/import_sahadan_rescue.py \
+            --input sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz \
+            --source-rows-seen 3017
+
+      - name: Validate channel output
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, gzip, hashlib, json
+          from pathlib import Path
+          m = json.loads(Path("updates/manifest.json").read_text(encoding="utf-8"))
+          current = Path("updates/releases/master_delta_current.csv.gz")
+          incremental = Path("updates/releases/master_delta_incremental.csv.gz")
+          assert m["enabled"] is True
+          assert m["latest_date"] >= "2026-10-23"
+          assert hashlib.sha256(current.read_bytes()).hexdigest() == m["sha256"]
+          assert hashlib.sha256(incremental.read_bytes()).hexdigest() == m["incremental_sha256"]
+          with gzip.open(current, "rt", encoding="utf-8", newline="") as f:
+              rows = sum(1 for _ in csv.DictReader(f))
+          with gzip.open(incremental, "rt", encoding="utf-8", newline="") as f:
+              inc_rows = sum(1 for _ in csv.DictReader(f))
+          assert rows == m["package_rows"]
+          assert inc_rows == m["incremental_rows"]
+          assert inc_rows > 0
+          print(f"RESCUE_IMPORT_OK latest={m['latest_date']} rows={rows} changed={inc_rows} version={m['version']}")
+          PY
+
+      - name: Remove temporary input and commit channel update
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
+          git commit -m "MASTER mobile rescue import: 2026-10-23"
+          git fetch origin main
+          git rebase origin/main
+          git push
