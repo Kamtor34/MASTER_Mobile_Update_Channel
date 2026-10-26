@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz'
+      - 'sahadan_rescue_rows_*.csv.gz'
 
 permissions:
   contents: write
@@ -28,44 +28,115 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Check for rescue import file
+      - name: Find and verify rescue input
         id: input_check
         shell: bash
         run: |
           set -euo pipefail
-          if [ -s sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz ]; then
-            echo "present=true" >> "$GITHUB_OUTPUT"
-            actual="$(sha256sum sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz | cut -d' ' -f1)"
-            expected="99f57704e7e25f50880a58122fa849ac8430c546c8037af61b585f0db59da797"
-            echo "Input SHA-256: $actual"
-            test "$actual" = "$expected"
-          else
+          files=()
+          for candidate in sahadan_rescue_rows_????-??-??_????-??-??.csv.gz; do
+            [ -f "$candidate" ] && files+=("$candidate")
+          done
+          if [ "${#files[@]}" -eq 0 ]; then
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "No rescue import file in this revision; safely skipping."
+            echo "No rescue input file present; safely skipping."
+            exit 0
           fi
+          if [ "${#files[@]}" -ne 1 ]; then
+            echo "Expected one rescue input file, found ${#files[@]}." >&2
+            exit 1
+          fi
+
+          input="${files[0]}"
+          if [[ ! "$input" =~ ^sahadan_rescue_rows_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{4}-[0-9]{2}-[0-9]{2})\.csv\.gz$ ]]; then
+            echo "Filename must contain start and end dates." >&2
+            exit 1
+          fi
+          start="${BASH_REMATCH[1]}"
+          end="${BASH_REMATCH[2]}"
+          meta="${input%.csv.gz}.meta.json"
+          test -s "$input"
+          test -s "$meta"
+
+          INPUT_FILE="$input" META_FILE="$meta" START_DATE="$start" END_DATE="$end" GITHUB_OUTPUT_FILE="$GITHUB_OUTPUT" python - <<'PY'
+          import csv, gzip, hashlib, json, os
+          from datetime import date, timedelta
+          from pathlib import Path
+
+          input_path = Path(os.environ["INPUT_FILE"])
+          meta_path = Path(os.environ["META_FILE"])
+          start = date.fromisoformat(os.environ["START_DATE"])
+          end = date.fromisoformat(os.environ["END_DATE"])
+          if start > end:
+              raise SystemExit("Start date is after end date")
+
+          meta = json.loads(meta_path.read_text(encoding="utf-8"))
+          if meta.get("csv_file") != input_path.name:
+              raise SystemExit("Metadata filename does not match the rescue input")
+          if meta.get("start_date") != start.isoformat() or meta.get("end_date") != end.isoformat():
+              raise SystemExit("Metadata date range does not match the rescue filename")
+          digest = hashlib.sha256(input_path.read_bytes()).hexdigest()
+          if digest != meta.get("csv_sha256"):
+              raise SystemExit("Rescue CSV SHA-256 does not match metadata")
+
+          expected = []
+          cur = start
+          while cur <= end:
+              expected.append(cur.isoformat())
+              cur += timedelta(days=1)
+          if set(meta.get("days", {})) != set(expected):
+              raise SystemExit("Metadata does not contain every date in the requested interval")
+          if int(meta.get("source_rows_seen", 0)) < int(meta.get("finished_rows_seen", 0)):
+              raise SystemExit("Metadata source/finished row counts are inconsistent")
+
+          with gzip.open(input_path, "rt", encoding="utf-8-sig", newline="") as stream:
+              rows = list(csv.DictReader(stream))
+          if len(rows) != int(meta.get("finished_rows_seen", -1)):
+              raise SystemExit("CSV row count differs from metadata")
+          if sorted({row.get("date", "") for row in rows}) != expected:
+              raise SystemExit("CSV does not contain the full declared date range")
+          out = Path(os.environ["GITHUB_OUTPUT_FILE"])
+          with out.open("a", encoding="utf-8") as stream:
+              stream.write("present=true\n")
+              stream.write(f"input={input_path.name}\n")
+              stream.write(f"meta={meta_path.name}\n")
+              stream.write(f"start={start.isoformat()}\n")
+              stream.write(f"end={end.isoformat()}\n")
+              stream.write(f"source_rows_seen={int(meta['source_rows_seen'])}\n")
+          print(f"Input verified: dates={start}..{end}; rows={len(rows)}; source_rows={meta['source_rows_seen']}; sha256={digest}")
+          PY
 
       - name: Merge validated rescue data
         if: steps.input_check.outputs.present == 'true'
         shell: bash
+        env:
+          INPUT_FILE: ${{ steps.input_check.outputs.input }}
+          START_DATE: ${{ steps.input_check.outputs.start }}
+          END_DATE: ${{ steps.input_check.outputs.end }}
+          SOURCE_ROWS_SEEN: ${{ steps.input_check.outputs.source_rows_seen }}
         run: |
           set -euo pipefail
           python tools/import_sahadan_rescue.py \
-            --input sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz \
-            --source-rows-seen 3017
+            --input "$INPUT_FILE" \
+            --start "$START_DATE" \
+            --end "$END_DATE" \
+            --source-rows-seen "$SOURCE_ROWS_SEEN"
 
       - name: Validate channel output
         if: steps.input_check.outputs.present == 'true'
         shell: bash
+        env:
+          EXPECTED_END: ${{ steps.input_check.outputs.end }}
         run: |
           set -euo pipefail
           python - <<'PY'
-          import csv, gzip, hashlib, json
+          import csv, gzip, hashlib, json, os
           from pathlib import Path
           m = json.loads(Path("updates/manifest.json").read_text(encoding="utf-8"))
           current = Path("updates/releases/master_delta_current.csv.gz")
           incremental = Path("updates/releases/master_delta_incremental.csv.gz")
           assert m["enabled"] is True
-          assert m["latest_date"] >= "2026-10-23"
+          assert m["latest_date"] >= os.environ["EXPECTED_END"]
           assert hashlib.sha256(current.read_bytes()).hexdigest() == m["sha256"]
           assert hashlib.sha256(incremental.read_bytes()).hexdigest() == m["incremental_sha256"]
           with gzip.open(current, "rt", encoding="utf-8", newline="") as f:
@@ -81,13 +152,17 @@ jobs:
       - name: Remove temporary input and commit channel update
         if: steps.input_check.outputs.present == 'true'
         shell: bash
+        env:
+          INPUT_FILE: ${{ steps.input_check.outputs.input }}
+          META_FILE: ${{ steps.input_check.outputs.meta }}
+          END_DATE: ${{ steps.input_check.outputs.end }}
         run: |
           set -euo pipefail
-          git rm sahadan_rescue_rows_2026-10-12_2026-10-23.csv.gz
+          git rm "$INPUT_FILE" "$META_FILE"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
-          git commit -m "MASTER mobile rescue import: 2026-10-23"
+          git commit -m "MASTER mobile rescue import: $END_DATE"
           git fetch origin main
           git rebase origin/main
           git push
