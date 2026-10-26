@@ -225,7 +225,7 @@ def main():
         "enabled": bool(rows),
         "version": new_version,
         "previous_version": old_version,
-        "base_date": previous.get("base_date") or EXPECTED_START,
+        "base_date": previous.get("base_date") or args.start,
         "base_total_matches": base_total,
         "latest_date": latest,
         "total_matches": base_total + len(rows),
