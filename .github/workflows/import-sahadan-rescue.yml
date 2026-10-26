@@ -6,7 +6,7 @@ on:
     branches:
       - main
     paths:
-      - 'sahadan_rescue_rows_*.csv.gz'
+      - 'sahadan_rescue_package_*.zip'
 
 permissions:
   contents: write
@@ -28,56 +28,70 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Find and verify rescue input
+      - name: Unpack and verify rescue package
         id: input_check
         shell: bash
         run: |
           set -euo pipefail
-          files=()
-          for candidate in sahadan_rescue_rows_????-??-??_????-??-??.csv.gz; do
-            [ -f "$candidate" ] && files+=("$candidate")
+          packages=()
+          for candidate in sahadan_rescue_package_????-??-??_????-??-??.zip; do
+            [ -f "$candidate" ] && packages+=("$candidate")
           done
-          if [ "${#files[@]}" -eq 0 ]; then
+          if [ "${#packages[@]}" -eq 0 ]; then
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "No rescue input file present; safely skipping."
+            echo "No rescue package present; safely skipping."
             exit 0
           fi
-          if [ "${#files[@]}" -ne 1 ]; then
-            echo "Expected one rescue input file, found ${#files[@]}." >&2
+          if [ "${#packages[@]}" -ne 1 ]; then
+            echo "Expected exactly one rescue package, found ${#packages[@]}." >&2
             exit 1
           fi
 
-          input="${files[0]}"
-          if [[ ! "$input" =~ ^sahadan_rescue_rows_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{4}-[0-9]{2}-[0-9]{2})\.csv\.gz$ ]]; then
-            echo "Filename must contain start and end dates." >&2
+          package="${packages[0]}"
+          if [[ ! "$package" =~ ^sahadan_rescue_package_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{4}-[0-9]{2}-[0-9]{2})\.zip$ ]]; then
+            echo "Package filename must include a start and end date." >&2
             exit 1
           fi
           start="${BASH_REMATCH[1]}"
           end="${BASH_REMATCH[2]}"
-          meta="${input%.csv.gz}.meta.json"
-          test -s "$input"
-          test -s "$meta"
 
-          INPUT_FILE="$input" META_FILE="$meta" START_DATE="$start" END_DATE="$end" GITHUB_OUTPUT_FILE="$GITHUB_OUTPUT" python - <<'PY'
+          PACKAGE_FILE="$package" START_DATE="$start" END_DATE="$end" GITHUB_OUTPUT_FILE="$GITHUB_OUTPUT" python - <<'PY'
           import csv, gzip, hashlib, json, os
           from datetime import date, timedelta
           from pathlib import Path
+          from zipfile import ZipFile
 
-          input_path = Path(os.environ["INPUT_FILE"])
-          meta_path = Path(os.environ["META_FILE"])
+          package = Path(os.environ["PACKAGE_FILE"])
           start = date.fromisoformat(os.environ["START_DATE"])
           end = date.fromisoformat(os.environ["END_DATE"])
           if start > end:
-              raise SystemExit("Start date is after end date")
+              raise SystemExit("Package start date is after end date")
+
+          stem = package.stem.replace("sahadan_rescue_package_", "sahadan_rescue_rows_", 1)
+          csv_name = stem + ".csv.gz"
+          meta_name = stem + ".meta.json"
+          with ZipFile(package) as archive:
+              names = archive.namelist()
+              if len(names) != 2 or set(names) != {csv_name, meta_name}:
+                  raise SystemExit(f"Unexpected ZIP contents: {names}")
+              csv_bytes = archive.read(csv_name)
+              meta_bytes = archive.read(meta_name)
+
+          outdir = Path(".tmp/rescue-in")
+          outdir.mkdir(parents=True, exist_ok=True)
+          input_path = outdir / csv_name
+          meta_path = outdir / meta_name
+          input_path.write_bytes(csv_bytes)
+          meta_path.write_bytes(meta_bytes)
 
           meta = json.loads(meta_path.read_text(encoding="utf-8"))
-          if meta.get("csv_file") != input_path.name:
-              raise SystemExit("Metadata filename does not match the rescue input")
+          if meta.get("csv_file") != csv_name:
+              raise SystemExit("Metadata filename does not match CSV")
           if meta.get("start_date") != start.isoformat() or meta.get("end_date") != end.isoformat():
-              raise SystemExit("Metadata date range does not match the rescue filename")
-          digest = hashlib.sha256(input_path.read_bytes()).hexdigest()
+              raise SystemExit("Metadata date range does not match package filename")
+          digest = hashlib.sha256(csv_bytes).hexdigest()
           if digest != meta.get("csv_sha256"):
-              raise SystemExit("Rescue CSV SHA-256 does not match metadata")
+              raise SystemExit("CSV SHA-256 does not match metadata")
 
           expected = []
           cur = start
@@ -85,25 +99,31 @@ jobs:
               expected.append(cur.isoformat())
               cur += timedelta(days=1)
           if set(meta.get("days", {})) != set(expected):
-              raise SystemExit("Metadata does not contain every date in the requested interval")
+              raise SystemExit("Metadata is missing one or more requested dates")
           if int(meta.get("source_rows_seen", 0)) < int(meta.get("finished_rows_seen", 0)):
-              raise SystemExit("Metadata source/finished row counts are inconsistent")
+              raise SystemExit("Metadata source/finished counts are inconsistent")
 
           with gzip.open(input_path, "rt", encoding="utf-8-sig", newline="") as stream:
-              rows = list(csv.DictReader(stream))
+              reader = csv.DictReader(stream)
+              required = {"match_id", "date", "league", "home", "away", "home_score", "away_score",
+                          "ms1", "msx", "ms2", "kg_var", "kg_yok", "alt25", "ust25"}
+              if not required.issubset(set(reader.fieldnames or [])):
+                  raise SystemExit("CSV columns do not match the MASTER import schema")
+              rows = list(reader)
           if len(rows) != int(meta.get("finished_rows_seen", -1)):
               raise SystemExit("CSV row count differs from metadata")
           if sorted({row.get("date", "") for row in rows}) != expected:
-              raise SystemExit("CSV does not contain the full declared date range")
-          out = Path(os.environ["GITHUB_OUTPUT_FILE"])
-          with out.open("a", encoding="utf-8") as stream:
+              raise SystemExit("CSV does not contain every expected date")
+          outputs = Path(os.environ["GITHUB_OUTPUT_FILE"])
+          with outputs.open("a", encoding="utf-8") as stream:
               stream.write("present=true\n")
-              stream.write(f"input={input_path.name}\n")
-              stream.write(f"meta={meta_path.name}\n")
+              stream.write(f"input={input_path}\n")
+              stream.write(f"meta={meta_path}\n")
+              stream.write(f"package={package.name}\n")
               stream.write(f"start={start.isoformat()}\n")
               stream.write(f"end={end.isoformat()}\n")
               stream.write(f"source_rows_seen={int(meta['source_rows_seen'])}\n")
-          print(f"Input verified: dates={start}..{end}; rows={len(rows)}; source_rows={meta['source_rows_seen']}; sha256={digest}")
+          print(f"RESCUE_PACKAGE_OK dates={start}..{end} finished={len(rows)} source={meta['source_rows_seen']} sha256={digest}")
           PY
 
       - name: Merge validated rescue data
@@ -149,16 +169,15 @@ jobs:
           print(f"RESCUE_IMPORT_OK latest={m['latest_date']} rows={rows} changed={inc_rows} version={m['version']}")
           PY
 
-      - name: Remove temporary input and commit channel update
+      - name: Remove temporary package and commit channel update
         if: steps.input_check.outputs.present == 'true'
         shell: bash
         env:
-          INPUT_FILE: ${{ steps.input_check.outputs.input }}
-          META_FILE: ${{ steps.input_check.outputs.meta }}
+          PACKAGE_FILE: ${{ steps.input_check.outputs.package }}
           END_DATE: ${{ steps.input_check.outputs.end }}
         run: |
           set -euo pipefail
-          git rm "$INPUT_FILE" "$META_FILE"
+          git rm "$PACKAGE_FILE"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
