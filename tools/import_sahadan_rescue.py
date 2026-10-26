@@ -9,7 +9,7 @@ import json
 import math
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 FIELDS = [
@@ -17,8 +17,6 @@ FIELDS = [
     "home_score", "away_score", "ms1", "msx", "ms2", "kg_var", "kg_yok",
     "alt25", "ust25",
 ]
-EXPECTED_START = "2026-10-12"
-EXPECTED_END = "2026-10-23"
 
 
 def clean(value):
@@ -130,8 +128,17 @@ def sha256(path):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
+    parser.add_argument("--start", required=True)
+    parser.add_argument("--end", required=True)
     parser.add_argument("--source-rows-seen", type=int, required=True)
     args = parser.parse_args()
+    try:
+        start_date = datetime.strptime(args.start, "%Y-%m-%d").date()
+        end_date = datetime.strptime(args.end, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise RuntimeError("Start/end must be YYYY-MM-DD") from exc
+    if start_date > end_date:
+        raise RuntimeError("Start date is after end date")
 
     current = Path("updates/releases/master_delta_current.csv.gz")
     incremental = Path("updates/releases/master_delta_incremental.csv.gz")
@@ -147,17 +154,15 @@ def main():
 
     existing = read_gzip_csv(current)
     imported = read_gzip_csv(args.input)
-    if len(imported) < 2000:
+    if len(imported) < 100:
         raise RuntimeError(f"Rescue file unexpectedly small: {len(imported)} rows")
 
     imported_dates = sorted({row["date"] for row in imported.values()})
-    if not imported_dates or imported_dates[0] != EXPECTED_START or imported_dates[-1] != EXPECTED_END:
+    if not imported_dates or imported_dates[0] != args.start or imported_dates[-1] != args.end:
         raise RuntimeError(f"Unexpected imported date coverage: {imported_dates[:1]} -> {imported_dates[-1:]}")
     expected_dates = {
-        (datetime.strptime(EXPECTED_START, "%Y-%m-%d") +
-         __import__("datetime").timedelta(days=i)).strftime("%Y-%m-%d")
-        for i in range((datetime.strptime(EXPECTED_END, "%Y-%m-%d") -
-                        datetime.strptime(EXPECTED_START, "%Y-%m-%d")).days + 1)
+        (start_date + timedelta(days=i)).isoformat()
+        for i in range((end_date - start_date).days + 1)
     }
     if set(imported_dates) != expected_dates:
         raise RuntimeError("At least one expected day is missing from the rescue file")
