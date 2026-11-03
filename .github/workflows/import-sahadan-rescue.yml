@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'sahadan_rescue_package_*.zip'
+      - 'sahadan_browser_capture_*.json'
 
 permissions:
   contents: write
@@ -27,6 +28,33 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Convert browser JSON to rescue package
+        id: browser_json
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          json_files=(sahadan_browser_capture_????-??-??_????-??-??.json)
+          zip_files=(sahadan_rescue_package_????-??-??_????-??-??.zip)
+          if [ "${#json_files[@]}" -eq 0 ]; then
+            echo "source_json=" >> "$GITHUB_OUTPUT"
+            echo "No browser JSON supplied; checking for an already-built rescue ZIP."
+            exit 0
+          fi
+          if [ "${#json_files[@]}" -ne 1 ] || [ "${#zip_files[@]}" -ne 0 ]; then
+            echo "Upload exactly one browser JSON OR one prebuilt rescue ZIP, not both." >&2
+            exit 1
+          fi
+          input="${json_files[0]}"
+          if [[ ! "$input" =~ ^sahadan_browser_capture_([0-9]{4}-[0-9]{2}-[0-9]{2})_([0-9]{4}-[0-9]{2}-[0-9]{2})\.json$ ]]; then
+            echo "Browser JSON filename must include start and end dates." >&2
+            exit 1
+          fi
+          start="${BASH_REMATCH[1]}"
+          end="${BASH_REMATCH[2]}"
+          python tools/package_sahadan_browser_json.py --input "$input" --start "$start" --end "$end" --out-dir .
+          echo "source_json=$input" >> "$GITHUB_OUTPUT"
 
       - name: Unpack and verify rescue package
         id: input_check
@@ -174,10 +202,16 @@ jobs:
         shell: bash
         env:
           PACKAGE_FILE: ${{ steps.input_check.outputs.package }}
+          SOURCE_JSON: ${{ steps.browser_json.outputs.source_json }}
           END_DATE: ${{ steps.input_check.outputs.end }}
         run: |
           set -euo pipefail
-          git rm "$PACKAGE_FILE"
+          if git ls-files --error-unmatch "$PACKAGE_FILE" >/dev/null 2>&1; then
+            git rm -- "$PACKAGE_FILE"
+          else
+            rm -f -- "$PACKAGE_FILE"
+          fi
+          if [[ -n "${SOURCE_JSON:-}" ]]; then git rm -f -- "$SOURCE_JSON"; fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
