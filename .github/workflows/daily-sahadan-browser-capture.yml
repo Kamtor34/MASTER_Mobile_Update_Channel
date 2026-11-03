@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: sahadan-daily-browser-capture
@@ -75,11 +74,4 @@ jobs:
           git add "$file"
           git commit -m "Automated Sahadan browser capture: $START_DATE to $END_DATE"
           git push origin HEAD:main
-          curl --fail-with-body --silent --show-error \
-            -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/$REPOSITORY/actions/workflows/import-sahadan-rescue.yml/dispatches" \
-            -d '{"ref":"main"}'
-          echo "Existing rescue importer dispatched for $START_DATE..$END_DATE"
+          echo "JSON committed. The push event automatically starts the existing rescue importer for $START_DATE..$END_DATE."
