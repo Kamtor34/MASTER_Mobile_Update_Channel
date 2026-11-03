@@ -1,9 +1,6 @@
 name: Daily Sahadan Browser Capture
 
 on:
-  schedule:
-    # 06:20 Europe/Istanbul (UTC+3)
-    - cron: "20 3 * * *"
   workflow_dispatch:
   push:
     branches:
