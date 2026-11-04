@@ -48,6 +48,9 @@ def main():
     current=load(a.current) if a.current.exists() else {}
     if not incoming: raise RuntimeError('Rescue JSON produced zero finished rows')
     changed={}; new_count=updated_count=0
+    score_changed=odds_changed=missing_completed=multi_field_changed=0
+    score_fields={'home_score','away_score'}
+    odds_fields=set(FIELDS[9:])
     for row in incoming.values():
         ik='id:'+row['match_id'] if row.get('match_id') else ''
         fk='fb:'+'\\x1f'.join(row.get(k,'') for k in ('date','league','home','away'))
@@ -56,8 +59,14 @@ def main():
             nk=key(row); current[nk]=row; changed[nk]=row; new_count+=1
         else:
             old=current[old_key]; combined=merge(old,row); nk=key(combined)
-            if norm(old)!=norm(combined):
+            before=norm(old); after=norm(combined)
+            changed_fields={field for field in FIELDS if before[field]!=after[field]}
+            if changed_fields:
                 changed.pop(old_key,None); changed[nk]=combined; updated_count+=1
+                score_changed += bool(changed_fields & score_fields)
+                odds_changed += bool(changed_fields & odds_fields)
+                missing_completed += any(before[field]=='' and after[field]!='' for field in FIELDS)
+                multi_field_changed += len(changed_fields)>1
             if nk!=old_key: current.pop(old_key,None)
             current[nk]=combined
     rows=sorted(current.values(),key=lambda r:(r['date'],r['league'],r['home'],r['away']))
@@ -76,6 +85,10 @@ def main():
       'latest_date':latest,
       'total_matches':int(previous.get('base_total_matches') or previous.get('total_matches') or 0)+len(rows),
       'new_matches':new_count,'updated_matches':updated_count,
+      'updated_score_matches':score_changed,
+      'updated_odds_matches':odds_changed,
+      'completed_info_filled_matches':missing_completed,
+      'multi_field_changed_matches':multi_field_changed,
       'package_rows':len(rows),'source_rows_seen':source_rows_seen,
       'finished_rows_seen':len(incoming),'size_bytes':a.current.stat().st_size,
       'delta_url':a.public_url,'sha256':digest,
@@ -86,6 +99,9 @@ def main():
     }
     write_manifest(a.manifest,manifest)
     print(json.dumps({'status':'RESCUE_MERGED','start':start,'end':end,'incoming_rows':len(incoming),
-      'new_matches':new_count,'updated_matches':updated_count,'package_rows':len(rows),
-      'incremental_rows':len(delta),'version':manifest['version']},ensure_ascii=False,indent=2))
+      'new_matches':new_count,'updated_matches':updated_count,
+      'updated_score_matches':score_changed,'updated_odds_matches':odds_changed,
+      'completed_info_filled_matches':missing_completed,
+      'multi_field_changed_matches':multi_field_changed,
+      'package_rows':len(rows),'incremental_rows':len(delta),'version':manifest['version']},ensure_ascii=False,indent=2))
 if __name__=='__main__': main()
