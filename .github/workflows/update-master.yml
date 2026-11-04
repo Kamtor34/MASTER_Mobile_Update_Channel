@@ -121,7 +121,8 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz incoming/sahadan_rescue.json
+          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
+          if [ -d incoming ]; then git add -A incoming; fi
           if git diff --cached --quiet; then
             echo "Yeni/değişen yayın yok."
             exit 0
