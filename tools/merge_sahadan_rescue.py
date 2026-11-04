@@ -14,19 +14,36 @@ def main():
     p.add_argument('--public-url',required=True)
     p.add_argument('--incremental-public-url',required=True)
     a=p.parse_args()
-    root=json.loads(a.input.read_text(encoding='utf-8-sig'))
-    start=root.get('start_date'); end=root.get('end_date')
-    if not start or not end: raise RuntimeError('Rescue JSON is missing date coverage')
+    source_rows_seen=0
     with tempfile.TemporaryDirectory() as td:
         out=Path(td)
-        subprocess.run([sys.executable,'tools/package_sahadan_browser_json.py','--input',str(a.input),
-          '--start',start,'--end',end,'--out-dir',str(out)],check=True)
-        zpath=next(out.glob('*.zip'))
-        with zipfile.ZipFile(zpath) as z:
-            csv_name=next(n for n in z.namelist() if n.endswith('.csv.gz'))
-            with z.open(csv_name) as src, tempfile.NamedTemporaryFile(suffix='.csv.gz') as tmp:
-                tmp.write(src.read()); tmp.flush()
-                incoming=load(Path(tmp.name))
+        if a.input.suffix.lower()=='.zip':
+            with zipfile.ZipFile(a.input) as z:
+                names=z.namelist()
+                meta_name=next(n for n in names if n.endswith('.meta.json'))
+                meta=json.loads(z.read(meta_name))
+                csv_name=meta.get('csv_file')
+                if csv_name not in names: raise RuntimeError('Rescue ZIP CSV is missing')
+                csv_bytes=z.read(csv_name)
+                if hashlib.sha256(csv_bytes).hexdigest()!=meta.get('csv_sha256'):
+                    raise RuntimeError('Rescue ZIP CSV SHA-256 mismatch')
+                start=meta.get('start_date'); end=meta.get('end_date')
+                source_rows_seen=int(meta.get('source_rows_seen') or 0)
+                csv_path=out/'rescue.csv.gz'; csv_path.write_bytes(csv_bytes)
+                incoming=load(csv_path)
+        else:
+            root=json.loads(a.input.read_text(encoding='utf-8-sig'))
+            start=root.get('start_date'); end=root.get('end_date')
+            if not start or not end: raise RuntimeError('Rescue JSON is missing date coverage')
+            source_rows_seen=sum(int(v.get('match_count') or 0) for v in root.get('days',{}).values())
+            subprocess.run([sys.executable,'tools/package_sahadan_browser_json.py','--input',str(a.input),
+              '--start',start,'--end',end,'--out-dir',str(out)],check=True)
+            zpath=next(out.glob('*.zip'))
+            with zipfile.ZipFile(zpath) as z:
+                csv_name=next(n for n in z.namelist() if n.endswith('.csv.gz'))
+                csv_path=out/'rescue.csv.gz'; csv_path.write_bytes(z.read(csv_name))
+                incoming=load(csv_path)
+    if not start or not end: raise RuntimeError('Rescue file is missing date coverage')
     previous=json.loads(a.manifest.read_text(encoding='utf-8'))
     current=load(a.current) if a.current.exists() else {}
     if not incoming: raise RuntimeError('Rescue JSON produced zero finished rows')
@@ -59,7 +76,7 @@ def main():
       'latest_date':latest,
       'total_matches':int(previous.get('base_total_matches') or previous.get('total_matches') or 0)+len(rows),
       'new_matches':new_count,'updated_matches':updated_count,
-      'package_rows':len(rows),'source_rows_seen':sum(v['match_count'] for v in root['days'].values()),
+      'package_rows':len(rows),'source_rows_seen':source_rows_seen,
       'finished_rows_seen':len(incoming),'size_bytes':a.current.stat().st_size,
       'delta_url':a.public_url,'sha256':digest,
       'incremental_rows':len(delta),'incremental_size_bytes':a.incremental.stat().st_size,
