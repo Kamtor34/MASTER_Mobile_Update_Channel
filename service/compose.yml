@@ -1,0 +1,22 @@
+services:
+  master-update:
+    build:
+      context: ..
+      dockerfile: service/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      WORKSPACE: /data/workspace
+      GIT_BRANCH: main
+      GITHUB_TOKEN: ${GITHUB_TOKEN}
+      UPDATE_TRIGGER_TOKEN: ${UPDATE_TRIGGER_TOKEN}
+    volumes:
+      - master_update_data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+volumes:
+  master_update_data:
