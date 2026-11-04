@@ -185,13 +185,21 @@ def main():
         ids=sum(bool(x['match_id']) for x in fetched); ms=sum(bool(x['ms1'] and x['msx'] and x['ms2']) for x in fetched)
         if ids/len(fetched)<.95: raise RuntimeError(f'Maç_ID quality {ids}/{len(fetched)}')
         if ms==0: raise RuntimeError('MS market quality=0')
+    score_changed=odds_changed=missing_completed=multi_field_changed=0
+    score_fields={'home_score','away_score'}; odds_fields=set(FIELDS[9:])
     for inc in fetched:
         inc=norm(inc); ik=idkey(inc); fk=fbkey(inc); ok=ik if ik and ik in cur else (fk if fk in cur else None)
         if not ok:
             nk=ik or fk; cur[nk]=inc; changed_rows[nk]=inc; newn+=1; continue
         old=cur[ok]; m=merge(old,inc); nk=key(m)
-        if norm(old)!=norm(m):
+        before=norm(old); after=norm(m)
+        changed_fields={field for field in FIELDS if before[field]!=after[field]}
+        if changed_fields:
             updn+=1; changed_rows.pop(ok,None); changed_rows[nk]=m
+            score_changed += bool(changed_fields & score_fields)
+            odds_changed += bool(changed_fields & odds_fields)
+            missing_completed += any(before[field]=='' and after[field]!='' for field in FIELDS)
+            multi_field_changed += len(changed_fields)>1
         if nk!=ok: cur.pop(ok,None)
         cur[nk]=m
     rows=sorted(cur.values(),key=lambda r:(r['date'],r['league'],r['home'],r['away'])); write(a.out,rows)
@@ -199,6 +207,6 @@ def main():
     latest=max((r['date'] for r in rows),default=prev.get('latest_date') or a.start); digest=sha(a.out); incremental_digest=sha(a.incremental_out)
     changed=bool(incremental_rows)
     version=f'{latest}-{int(time.time())}-{digest[:12]}' if changed else prev_version
-    manifest={'schema':4,'enabled':bool(rows),'version':version,'previous_version':prev_version if changed else prev.get('previous_version',''),'base_date':base_date,'base_total_matches':base_total,'latest_date':latest,'total_matches':base_total+len(rows),'new_matches':newn,'updated_matches':updn,'package_rows':len(rows),'source_rows_seen':rawtotal,'finished_rows_seen':len(fetched),'size_bytes':a.out.stat().st_size,'delta_url':a.public_url,'sha256':digest,'incremental_rows':len(incremental_rows),'incremental_size_bytes':a.incremental_out.stat().st_size,'incremental_url':a.incremental_public_url,'incremental_sha256':incremental_digest,'key_strategy':'match_id_then_date_league_home_away','columns':FIELDS}
+    manifest={'schema':4,'enabled':bool(rows),'version':version,'previous_version':prev_version if changed else prev.get('previous_version',''),'base_date':base_date,'base_total_matches':base_total,'latest_date':latest,'total_matches':base_total+len(rows),'new_matches':newn,'updated_matches':updn,'updated_score_matches':score_changed,'updated_odds_matches':odds_changed,'completed_info_filled_matches':missing_completed,'multi_field_changed_matches':multi_field_changed,'package_rows':len(rows),'source_rows_seen':rawtotal,'finished_rows_seen':len(fetched),'size_bytes':a.out.stat().st_size,'delta_url':a.public_url,'sha256':digest,'incremental_rows':len(incremental_rows),'incremental_size_bytes':a.incremental_out.stat().st_size,'incremental_url':a.incremental_public_url,'incremental_sha256':incremental_digest,'key_strategy':'match_id_then_date_league_home_away','columns':FIELDS}
     write_manifest(a.manifest,manifest); print(json.dumps(manifest,ensure_ascii=False,indent=2))
 if __name__=='__main__': main()
