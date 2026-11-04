@@ -16,7 +16,7 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - name: Checkout channel
         uses: actions/checkout@v4
@@ -44,28 +44,52 @@ jobs:
           start=(latest-timedelta(days=7)) if current.exists() and current.stat().st_size>0 else (latest+timedelta(days=1))
           if start>today: start=today
           with open('dates.env','w',encoding='utf-8') as f:
-              f.write(f'START={start.isoformat()}\nEND={today.isoformat()}\n')
+              f.write(f'START={start.isoformat()}\\nEND={today.isoformat()}\\n')
           print(f'Fetch window: {start} -> {today}')
           PY
           cat dates.env >> "$GITHUB_ENV"
 
-      - name: Build validated cumulative delta
+      - name: Build online delta or use browser JSON fallback
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p updates/releases .tmp/raw
           CURRENT=updates/releases/master_delta_current.csv.gz
           INCREMENTAL=updates/releases/master_delta_incremental.csv.gz
-          python tools/master_update_pipeline.py \
-            --start "$START" \
-            --end "$END" \
-            --existing-delta "$CURRENT" \
-            --out "$CURRENT" \
-            --incremental-out "$INCREMENTAL" \
-            --raw-dir .tmp/raw \
-            --manifest updates/manifest.json \
-            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
-            --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
+          set +e
+          python tools/master_update_pipeline.py \\
+            --start "$START" \\
+            --end "$END" \\
+            --existing-delta "$CURRENT" \\
+            --out "$CURRENT" \\
+            --incremental-out "$INCREMENTAL" \\
+            --raw-dir .tmp/raw \\
+            --manifest updates/manifest.json \\
+            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
+            --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz" 2>&1 | tee .tmp/online-update.log
+          ONLINE_STATUS=${PIPESTATUS[0]}
+          set -e
+          if [ "$ONLINE_STATUS" -eq 0 ]; then
+            echo "UPDATE_SOURCE=online" >> "$GITHUB_ENV"
+          elif grep -q "HTTP 403" .tmp/online-update.log; then
+            RESCUE="incoming/sahadan_rescue.json"
+            if [ ! -s "$RESCUE" ]; then
+              echo "::warning::Sahadan HTTP 403. No incoming/sahadan_rescue.json was supplied; existing published channel is retained."
+              exit 1
+            fi
+            python tools/merge_sahadan_rescue.py \\
+              --input "$RESCUE" \\
+              --current "$CURRENT" \\
+              --incremental "$INCREMENTAL" \\
+              --manifest updates/manifest.json \\
+              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
+              --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
+            rm "$RESCUE"
+            echo "UPDATE_SOURCE=browser_json_fallback" >> "$GITHUB_ENV"
+          else
+            echo "::error::Online update failed for a reason other than HTTP 403. No fallback merge was attempted."
+            exit "$ONLINE_STATUS"
+          fi
 
       - name: Validate generated channel files
         shell: bash
@@ -97,15 +121,12 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz
+          git add updates/manifest.json updates/releases/master_delta_current.csv.gz updates/releases/master_delta_incremental.csv.gz incoming/sahadan_rescue.json
           if git diff --cached --quiet; then
             echo "Yeni/değişen yayın yok."
             exit 0
           fi
-          git commit -m "MASTER mobile delta: $END"
-
-          # Rerun/manual starts may begin from an older workflow commit.
-          # Rebase the generated delta commit onto current main before pushing.
+          git commit -m "MASTER mobile delta: $END (${UPDATE_SOURCE:-online})"
           git fetch origin main
           git rebase origin/main
           git push
