@@ -72,7 +72,7 @@ jobs:
           if [ "$ONLINE_STATUS" -eq 0 ]; then
             echo "UPDATE_SOURCE=online" >> "$GITHUB_ENV"
           elif grep -q "HTTP 403" .tmp/online-update.log; then
-            RESCUE="incoming/sahadan_rescue.json"
+            RESCUE="incoming/sahadan_rescue_package.zip"
             if [ ! -s "$RESCUE" ]; then
               echo "::warning::Sahadan HTTP 403. No incoming/sahadan_rescue.json was supplied; existing published channel is retained."
               exit 1
