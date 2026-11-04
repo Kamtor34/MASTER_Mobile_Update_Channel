@@ -72,19 +72,24 @@ jobs:
           if [ "$ONLINE_STATUS" -eq 0 ]; then
             echo "UPDATE_SOURCE=online" >> "$GITHUB_ENV"
           elif grep -q "HTTP 403" .tmp/online-update.log; then
-            RESCUE="incoming/sahadan_rescue_package.zip"
-            if [ ! -s "$RESCUE" ]; then
-              echo "::warning::Sahadan HTTP 403. No incoming/sahadan_rescue.json was supplied; existing published channel is retained."
+            # Browser rescue ZIP filenames include their date range; discover the
+            # actual uploaded package instead of requiring one hard-coded name.
+            mapfile -t RESCUE_FILES < <(find incoming -maxdepth 1 -type f -name 'sahadan_rescue_package*.zip' -print 2>/dev/null | sort)
+            if [ "${#RESCUE_FILES[@]}" -ne 1 ]; then
+              echo "::error::Expected exactly one incoming/sahadan_rescue_package*.zip, found ${#RESCUE_FILES[@]}. Existing published channel is retained."
+              printf 'Found: %s\\n' "${RESCUE_FILES[@]}"
               exit 1
             fi
-            python tools/merge_sahadan_rescue.py \
-              --input "$RESCUE" \
-              --current "$CURRENT" \
-              --incremental "$INCREMENTAL" \
-              --manifest updates/manifest.json \
-              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
+            RESCUE="${RESCUE_FILES[0]}"
+            echo "Using browser rescue package: $RESCUE"
+            python tools/merge_sahadan_rescue.py \\
+              --input "$RESCUE" \\
+              --current "$CURRENT" \\
+              --incremental "$INCREMENTAL" \\
+              --manifest updates/manifest.json \\
+              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
               --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
-            rm "$RESCUE"
+            # Keep the original ZIP as an audit/recovery source; do not delete it.
             echo "UPDATE_SOURCE=browser_json_fallback" >> "$GITHUB_ENV"
           else
             echo "::error::Online update failed for a reason other than HTTP 403. No fallback merge was attempted."
