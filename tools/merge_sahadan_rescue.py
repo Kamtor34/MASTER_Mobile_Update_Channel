@@ -2,6 +2,7 @@
 """Merge a validated Sahadan browser-rescue JSON into the MASTER mobile delta channel."""
 import argparse, csv, gzip, hashlib, json, subprocess, sys, tempfile, zipfile
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.master_update_pipeline import FIELDS, load, norm, key, merge, write, sha, write_manifest
 
 def main():
