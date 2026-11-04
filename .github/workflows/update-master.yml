@@ -57,15 +57,15 @@ jobs:
           CURRENT=updates/releases/master_delta_current.csv.gz
           INCREMENTAL=updates/releases/master_delta_incremental.csv.gz
           set +e
-          python tools/master_update_pipeline.py \\
-            --start "$START" \\
-            --end "$END" \\
-            --existing-delta "$CURRENT" \\
-            --out "$CURRENT" \\
-            --incremental-out "$INCREMENTAL" \\
-            --raw-dir .tmp/raw \\
-            --manifest updates/manifest.json \\
-            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
+          python tools/master_update_pipeline.py \
+            --start "$START" \
+            --end "$END" \
+            --existing-delta "$CURRENT" \
+            --out "$CURRENT" \
+            --incremental-out "$INCREMENTAL" \
+            --raw-dir .tmp/raw \
+            --manifest updates/manifest.json \
+            --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
             --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz" 2>&1 | tee .tmp/online-update.log
           ONLINE_STATUS=${PIPESTATUS[0]}
           set -e
@@ -77,12 +77,12 @@ jobs:
               echo "::warning::Sahadan HTTP 403. No incoming/sahadan_rescue.json was supplied; existing published channel is retained."
               exit 1
             fi
-            python tools/merge_sahadan_rescue.py \\
-              --input "$RESCUE" \\
-              --current "$CURRENT" \\
-              --incremental "$INCREMENTAL" \\
-              --manifest updates/manifest.json \\
-              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
+            python tools/merge_sahadan_rescue.py \
+              --input "$RESCUE" \
+              --current "$CURRENT" \
+              --incremental "$INCREMENTAL" \
+              --manifest updates/manifest.json \
+              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
               --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
             rm "$RESCUE"
             echo "UPDATE_SOURCE=browser_json_fallback" >> "$GITHUB_ENV"
