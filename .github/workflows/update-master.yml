@@ -82,12 +82,12 @@ jobs:
             fi
             RESCUE="${RESCUE_FILES[0]}"
             echo "Using browser rescue package: $RESCUE"
-            python tools/merge_sahadan_rescue.py \\
-              --input "$RESCUE" \\
-              --current "$CURRENT" \\
-              --incremental "$INCREMENTAL" \\
-              --manifest updates/manifest.json \\
-              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \\
+            python tools/merge_sahadan_rescue.py \
+              --input "$RESCUE" \
+              --current "$CURRENT" \
+              --incremental "$INCREMENTAL" \
+              --manifest updates/manifest.json \
+              --public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_current.csv.gz" \
               --incremental-public-url "https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/updates/releases/master_delta_incremental.csv.gz"
             # Keep the original ZIP as an audit/recovery source; do not delete it.
             echo "UPDATE_SOURCE=browser_json_fallback" >> "$GITHUB_ENV"
