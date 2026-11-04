@@ -44,7 +44,7 @@ jobs:
           start=(latest-timedelta(days=7)) if current.exists() and current.stat().st_size>0 else (latest+timedelta(days=1))
           if start>today: start=today
           with open('dates.env','w',encoding='utf-8') as f:
-              f.write(f'START={start.isoformat()}\\nEND={today.isoformat()}\\n')
+              f.write(f'START={start.isoformat()}\nEND={today.isoformat()}\n')
           print(f'Fetch window: {start} -> {today}')
           PY
           cat dates.env >> "$GITHUB_ENV"
