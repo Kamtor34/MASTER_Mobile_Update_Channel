@@ -91,7 +91,7 @@ jobs:
                       if start and end:
                           candidates.append((end,start,str(path)))
               except Exception as exc:
-                  print(f'Ignoring invalid rescue ZIP {path.name}: {exc}')
+                  print(f'Ignoring invalid rescue ZIP {path.name}: {exc}', file=__import__('sys').stderr)
           if not candidates:
               raise SystemExit('No valid incoming/sahadan_rescue_package*.zip found. Upload the browser-captured ZIP to incoming/.')
           newest=max((end,start) for end,start,path in candidates)
