@@ -71,17 +71,41 @@ jobs:
           set -e
           if [ "$ONLINE_STATUS" -eq 0 ]; then
             echo "UPDATE_SOURCE=online" >> "$GITHUB_ENV"
-          elif grep -q "HTTP 403" .tmp/online-update.log; then
-            # Browser rescue ZIP filenames include their date range; discover the
-            # actual uploaded package instead of requiring one hard-coded name.
-            mapfile -t RESCUE_FILES < <(find incoming -maxdepth 1 -type f -name 'sahadan_rescue_package*.zip' -print 2>/dev/null | sort)
-            if [ "${#RESCUE_FILES[@]}" -ne 1 ]; then
-              echo "::error::Expected exactly one incoming/sahadan_rescue_package*.zip, found ${#RESCUE_FILES[@]}. Existing published channel is retained."
-              printf 'Found: %s\\n' "${RESCUE_FILES[@]}"
+          elif grep -Eq 'HTTP (403|408|425|429|500|502|503|504)([^0-9]|$)' .tmp/online-update.log; then
+            # Sahadan may block cloud requests (403) or return transient
+            # gateway/server errors (408/429/5xx). Use the newest validated
+            # browser-captured package; older ZIPs remain available for audit.
+            RESCUE="$(python - <<'PY'
+          import json, zipfile
+          from pathlib import Path
+          candidates=[]
+          for path in Path('incoming').glob('sahadan_rescue_package*.zip'):
+              try:
+                  with zipfile.ZipFile(path) as archive:
+                      meta_names=[n for n in archive.namelist() if n.endswith('.meta.json')]
+                      if len(meta_names)!=1:
+                          continue
+                      meta=json.loads(archive.read(meta_names[0]))
+                      start=meta.get('start_date')
+                      end=meta.get('end_date')
+                      if start and end:
+                          candidates.append((end,start,str(path)))
+              except Exception as exc:
+                  print(f'Ignoring invalid rescue ZIP {path.name}: {exc}')
+          if not candidates:
+              raise SystemExit('No valid incoming/sahadan_rescue_package*.zip found. Upload the browser-captured ZIP to incoming/.')
+          newest=max((end,start) for end,start,path in candidates)
+          selected=[path for end,start,path in candidates if (end,start)==newest]
+          if len(selected)!=1:
+              raise SystemExit(f'Ambiguous newest rescue packages for coverage {newest}: {selected}')
+          print(selected[0])
+          PY
+          )"
+            if [ ! -f "$RESCUE" ]; then
+              echo "::error::No usable browser rescue package was selected. Existing published channel is retained."
               exit 1
             fi
-            RESCUE="${RESCUE_FILES[0]}"
-            echo "Using browser rescue package: $RESCUE"
+            echo "Using newest browser rescue package: $RESCUE"
             python tools/merge_sahadan_rescue.py \
               --input "$RESCUE" \
               --current "$CURRENT" \
@@ -92,7 +116,7 @@ jobs:
             # Keep the original ZIP as an audit/recovery source; do not delete it.
             echo "UPDATE_SOURCE=browser_json_fallback" >> "$GITHUB_ENV"
           else
-            echo "::error::Online update failed for a reason other than HTTP 403. No fallback merge was attempted."
+            echo "::error::Online update failed without a supported fallback HTTP status. No fallback merge was attempted."
             exit "$ONLINE_STATUS"
           fi
 
