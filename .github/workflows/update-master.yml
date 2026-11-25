@@ -98,6 +98,16 @@ jobs:
           selected=[path for end,start,path in candidates if (end,start)==newest]
           if len(selected)!=1:
               raise SystemExit(f'Ambiguous newest rescue packages for coverage {newest}: {selected}')
+          manifest=json.loads(Path('updates/manifest.json').read_text(encoding='utf-8'))
+          published=manifest.get('latest_date','')
+          if newest[0] <= published:
+              available=sorted((end,start,path) for end,start,path in candidates)
+              raise SystemExit(
+                  f'No newer rescue package available. Published latest_date={published}; '
+                  f'newest incoming coverage={newest[0]} (package={selected[0]}). '
+                  f'Upload a package whose end_date is later than {published}. '
+                  f'Available packages={available}'
+              )
           print(selected[0])
           PY
           )"
